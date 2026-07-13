@@ -27,7 +27,8 @@ if uploaded_file:
         text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
         docs = text_splitter.split_documents(data)
         
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+        # Change the model string to this:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004", google_api_key=api_key)
         vectorstore = FAISS.from_documents(docs, embeddings)
     
     st.success("Notes indexed!")
