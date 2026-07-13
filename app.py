@@ -4,57 +4,44 @@ from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.chains.combine_documents import create_stuff_documents_chain
-from langchain_core.prompts import ChatPromptTemplate
-from langchain.chains import create_retrieval_chain
 
 st.set_page_config(page_title="AI Notes Assistant", layout="centered")
 
-st.title("🎓 AI College Notes Assistant")
-st.sidebar.header("Configuration")
-api_key = st.sidebar.text_input("Enter your Google Gemini API Key", type="password")
+# --- Security ---
+try:
+    api_key = st.secrets["GOOGLE_API_KEY"]
+except:
+    st.error("Please add GOOGLE_API_KEY in Streamlit Secrets.")
+    st.stop()
 
+st.title("🎓 AI College Notes Assistant")
 uploaded_file = st.file_uploader("Upload your lecture notes (PDF)", type="pdf")
 
-if uploaded_file and api_key:
-    # Save uploaded file temporarily
+if uploaded_file:
     with open("temp.pdf", "wb") as f:
         f.write(uploaded_file.getbuffer())
     
-    # 1. Load and Split
-    loader = PyPDFLoader("temp.pdf")
-    data = loader.load()
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-    docs = text_splitter.split_documents(data)
+    with st.spinner("Processing..."):
+        loader = PyPDFLoader("temp.pdf")
+        data = loader.load()
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        docs = text_splitter.split_documents(data)
+        
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
+        vectorstore = FAISS.from_documents(docs, embeddings)
     
-    # 2. Embed and Store
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001", google_api_key=api_key)
-    vectorstore = FAISS.from_documents(docs, embeddings)
-    
-    st.success("Notes processed! You can now ask questions.")
+    st.success("Notes indexed!")
 
-    # 3. Chat Interface
-    query = st.text_input("Ask a question about your notes:")
+    query = st.text_input("Ask a question:")
     if query:
-        # Use the modern Retrieval Chain
+        # Retrieve relevant chunks
+        docs_relevant = vectorstore.similarity_search(query, k=3)
+        context_text = "\n\n".join([d.page_content for d in docs_relevant])
+        
+        # Direct Prompting
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
+        prompt = f"Use the following context to answer the question. Context: {context_text} \n\n Question: {query}"
         
-        # Define a prompt template
-        prompt = ChatPromptTemplate.from_template("""
-        Answer the following question based only on the provided context:
-        <context>
-        {context}
-        </context>
-        Question: {input}
-        """)
-        
-        # Create chains
-        combine_docs_chain = create_stuff_documents_chain(llm, prompt)
-        retriever = vectorstore.as_retriever()
-        retrieval_chain = create_retrieval_chain(retriever, combine_docs_chain)
-        
-        # Invoke
-        response = retrieval_chain.invoke({"input": query})
-        
+        response = llm.invoke(prompt)
         st.write("### Answer:")
-        st.write(response["answer"])
+        st.write(response.content)
