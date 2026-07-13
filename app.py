@@ -1,11 +1,12 @@
 import streamlit as st
-import os
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.chains.question_answering import load_qa_chain
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains import create_retrieval_chain
 
 st.set_page_config(page_title="AI Notes Assistant", layout="centered")
 
@@ -35,14 +36,25 @@ if uploaded_file and api_key:
     # 3. Chat Interface
     query = st.text_input("Ask a question about your notes:")
     if query:
-        # Search relevant chunks
-        docs_relevant = vectorstore.similarity_search(query, k=3)
-        
-        # Setup LLM
+        # Use the modern Retrieval Chain
         llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", google_api_key=api_key)
-        chain = load_qa_chain(llm, chain_type="stuff")
         
-        # Generate answer
-        response = chain.run(input_documents=docs_relevant, question=query)
+        # Define a prompt template
+        prompt = ChatPromptTemplate.from_template("""
+        Answer the following question based only on the provided context:
+        <context>
+        {context}
+        </context>
+        Question: {input}
+        """)
+        
+        # Create chains
+        combine_docs_chain = create_stuff_documents_chain(llm, prompt)
+        retriever = vectorstore.as_retriever()
+        retrieval_chain = create_retrieval_chain(retriever, combine_docs_chain)
+        
+        # Invoke
+        response = retrieval_chain.invoke({"input": query})
+        
         st.write("### Answer:")
-        st.write(response)
+        st.write(response["answer"])
