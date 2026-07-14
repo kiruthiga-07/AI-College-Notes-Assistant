@@ -5,6 +5,7 @@ import docx
 import json
 import re
 import io
+import random
 
 # ---------------------------------------------------------
 # PAGE CONFIG
@@ -16,10 +17,10 @@ st.set_page_config(
 )
 
 # ---------------------------------------------------------
-# API KEY SETUP (Streamlit secrets — never hardcode this)
+# API KEY SETUP (Streamlit secrets only — never hardcode this)
 # ---------------------------------------------------------
 def get_api_key():
-    # 1. Try Streamlit secrets (used on Streamlit Cloud + locally via .streamlit/secrets.toml)
+    # Only source: Streamlit secrets (used on Streamlit Cloud + locally via .streamlit/secrets.toml)
     if "GEMINI_API_KEY" in st.secrets:
         return st.secrets["GEMINI_API_KEY"]
     return None
@@ -75,14 +76,11 @@ def extract_text_from_file(uploaded_file):
             page_text = page.extract_text() or ""
             text += page_text + "\n"
         return text.strip()
-
     elif name.endswith(".docx"):
         doc = docx.Document(io.BytesIO(data))
         return "\n".join(p.text for p in doc.paragraphs).strip()
-
     elif name.endswith(".txt"):
         return data.decode("utf-8", errors="ignore").strip()
-
     else:
         return ""
 
@@ -146,6 +144,7 @@ def generate_quiz(text, num_questions=5):
     prompt = f"""Create a multiple-choice quiz with exactly {num_questions} questions based on the notes below.
 
 Return ONLY valid JSON (no markdown fences, no extra commentary) in exactly this format:
+
 {{
   "questions": [
     {{
@@ -167,6 +166,7 @@ NOTES:
         return None
 
     cleaned = re.sub(r"^```json|```$", "", raw.strip(), flags=re.MULTILINE).strip()
+
     try:
         return json.loads(cleaned)
     except json.JSONDecodeError:
@@ -181,12 +181,28 @@ NOTES:
         return None
 
 
+def shuffle_quiz_options(quiz):
+    """Shuffle the order of options for each question, keeping correct_answer accurate."""
+    for q in quiz["questions"]:
+        items = list(q["options"].items())  # [("A", "..."), ("B", "..."), ...]
+        correct_text = q["options"][q["correct_answer"]]
+        random.shuffle(items)
+        letters = ["A", "B", "C", "D"][: len(items)]
+        new_options = {letters[i]: text for i, (_, text) in enumerate(items)}
+        # find which new letter now holds the correct text
+        new_correct = next(k for k, v in new_options.items() if v == correct_text)
+        q["options"] = new_options
+        q["correct_answer"] = new_correct
+    return quiz
+
+
 # ---------------------------------------------------------
 # SIDEBAR: FILE UPLOAD
 # ---------------------------------------------------------
 with st.sidebar:
     st.divider()
     st.subheader("1. Upload your notes")
+
     uploaded_file = st.file_uploader(
         "PDF, DOCX, or TXT", type=["pdf", "docx", "txt"]
     )
@@ -195,18 +211,18 @@ with st.sidebar:
         if st.button("Process file", use_container_width=True):
             with st.spinner("Extracting text..."):
                 text = extract_text_from_file(uploaded_file)
-            if not text:
-                st.error(
-                    "Couldn't extract any text. If this is a scanned/image-based PDF, "
-                    "text extraction won't work — try a text-based PDF or DOCX/TXT."
-                )
-            else:
-                st.session_state.notes_text = text
-                st.session_state.summary = ""
-                st.session_state.chat_history = []
-                st.session_state.quiz = None
-                st.session_state.quiz_submitted = False
-                st.success(f"Extracted {len(text)} characters.")
+                if not text:
+                    st.error(
+                        "Couldn't extract any text. If this is a scanned/image-based PDF, "
+                        "text extraction won't work — try a text-based PDF or DOCX/TXT."
+                    )
+                else:
+                    st.session_state.notes_text = text
+                    st.session_state.summary = ""
+                    st.session_state.chat_history = []
+                    st.session_state.quiz = None
+                    st.session_state.quiz_submitted = False
+                    st.success(f"Extracted {len(text)} characters.")
 
     if st.session_state.notes_text:
         st.caption(f"✅ Notes loaded ({len(st.session_state.notes_text)} chars)")
@@ -231,11 +247,12 @@ tab1, tab2, tab3 = st.tabs(["📝 Simple Notes", "💬 Ask Questions", "🧠 Qui
 # --- TAB 1: SUMMARY ---
 with tab1:
     st.subheader("Simplified Notes")
+
     if st.button("Generate simple notes"):
         with st.spinner("Generating notes..."):
             summary = generate_summary(st.session_state.notes_text)
-        if summary:
-            st.session_state.summary = summary
+            if summary:
+                st.session_state.summary = summary
 
     if st.session_state.summary:
         st.markdown(st.session_state.summary)
@@ -266,9 +283,9 @@ with tab2:
                 answer = answer_question(
                     question, st.session_state.notes_text, st.session_state.chat_history
                 )
-            if answer:
-                st.write(answer)
-                st.session_state.chat_history.append({"q": question, "a": answer})
+                if answer:
+                    st.write(answer)
+                    st.session_state.chat_history.append({"q": question, "a": answer})
 
     if st.session_state.chat_history and st.button("Clear chat"):
         st.session_state.chat_history = []
@@ -287,10 +304,11 @@ with tab3:
         if st.button("Generate new quiz"):
             with st.spinner("Building your quiz..."):
                 quiz = generate_quiz(st.session_state.notes_text, num_q)
-            if quiz and "questions" in quiz:
-                st.session_state.quiz = quiz
-                st.session_state.quiz_answers = {}
-                st.session_state.quiz_submitted = False
+                if quiz and "questions" in quiz:
+                    quiz = shuffle_quiz_options(quiz)
+                    st.session_state.quiz = quiz
+                    st.session_state.quiz_answers = {}
+                    st.session_state.quiz_submitted = False
 
     if st.session_state.quiz:
         questions = st.session_state.quiz["questions"]
@@ -299,13 +317,13 @@ with tab3:
             for i, q in enumerate(questions):
                 st.markdown(f"**Q{i+1}. {q['question']}**")
                 options = q["options"]
-                labels = [f"{k}. {v}" for k, v in options.items()]
                 choice = st.radio(
                     f"quiz_q_{i}",
                     options=list(options.keys()),
                     format_func=lambda k, opts=options: f"{k}. {opts[k]}",
                     key=f"radio_{i}",
                     label_visibility="collapsed",
+                    index=None,
                 )
                 st.session_state.quiz_answers[i] = choice
                 st.divider()
