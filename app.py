@@ -30,17 +30,11 @@ with st.sidebar:
     st.title("📚 AI College Notes Assistant")
     st.caption("Upload notes → get summaries, ask questions, take quizzes.")
 
-    if not api_key:
-        st.warning("No API key found in secrets.")
-        api_key = st.text_input("Enter your Gemini API key", type="password")
-        st.caption(
-            "Get a free key at [Google AI Studio](https://aistudio.google.com/app/apikey). "
-            "On Streamlit Cloud, add it permanently under **Settings → Secrets** as "
-            "`GEMINI_API_KEY = \"...\"` instead of typing it here each time."
-        )
-
 if not api_key:
-    st.info("👈 Add your Gemini API key in the sidebar to get started.")
+    st.error(
+        "This app isn't configured yet. The site owner needs to add "
+        "`GEMINI_API_KEY` under Settings → Secrets on Streamlit Cloud."
+    )
     st.stop()
 
 try:
